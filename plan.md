@@ -1,6 +1,6 @@
-# **⚡ Team Code Catalyst: Hackathon Playbook & Parallel Execution Strategy**
+# **⚡ Team ZeroToDeploy: Hackathon Playbook & Parallel Execution Strategy**
 
-**Objective:** Build the "Local-First Vercel Clone" in 7 hours with 3 developers working simultaneously.
+**Objective:** Build "ZeroToDeploy" in 7 hours with 3 developers working simultaneously.
 
 **Mantra:** Zero merge conflicts, constant forward momentum, test early.
 
@@ -41,7 +41,7 @@ We are using a **Monorepo Structure** with strict boundary lines to prevent Praf
 
 ### **The Conflict-Free Folder Structure**
 
-local-vercel-clone/  
+zerotodeploy/  
 ├── docker-compose.yml          \<-- Mohit owns this  
 ├── .env                        \<-- Praful owns this (Supabase/Neon DB connection string)  
 ├── /backend  

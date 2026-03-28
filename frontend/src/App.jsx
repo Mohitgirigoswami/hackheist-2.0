@@ -77,8 +77,8 @@ function App() {
               <Rocket className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-3xl font-extrabold tracking-tight">Code Catalyst</h1>
-              <p className="text-sm text-slate-400 font-medium">Local-First Vercel Clone</p>
+              <h1 className="text-3xl font-extrabold tracking-tight">ZeroToDeploy</h1>
+              <p className="text-sm text-slate-400 font-medium">From Zero to Deployment</p>
             </div>
           </div>
         </header>

@@ -4,7 +4,7 @@ from routes.api import router as api_router
 from db.connection import verify_schema
 import uvicorn
 
-app = FastAPI(title="Local Vercel Clone API")
+app = FastAPI(title="ZeroToDeploy API")
 
 # Ensure Track C (React) can communicate with Track B (FastAPI) properly
 app.add_middleware(
