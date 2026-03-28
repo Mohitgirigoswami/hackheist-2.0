@@ -6,7 +6,6 @@ import {
   TerminalSquare, 
   ExternalLink, 
   Activity, 
-  Github,
   BarChart2,
   X 
 } from 'lucide-react';
@@ -82,9 +81,6 @@ function App() {
               <p className="text-sm text-slate-400 font-medium">Local-First Vercel Clone</p>
             </div>
           </div>
-          <a href="https://github.com" target="_blank" rel="noreferrer" className="glass p-3 rounded-full hover:bg-white/10 transition-colors">
-            <Github className="w-5 h-5" />
-          </a>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
