@@ -6,9 +6,10 @@ import uvicorn
 
 app = FastAPI(title="Local Vercel Clone API")
 
+# Ensure Track C (React) can communicate with Track B (FastAPI) properly
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Broad CORS for hackathon development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
