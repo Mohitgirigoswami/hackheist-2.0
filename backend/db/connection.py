@@ -34,14 +34,34 @@ def verify_schema():
                         sub_directory VARCHAR(255) DEFAULT '/',
                         assigned_port INTEGER,
                         status VARCHAR(50) DEFAULT 'QUEUED',
+                        env_vars JSONB DEFAULT '{}',
+                        framework VARCHAR(50),
+                        build_duration FLOAT,
                         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
                 
-                # Hour 6 schema migration: selectively add sub_directory column to existing table in Production
+                # Migration: add sub_directory column to existing table
                 try:
-                    cur.execute("ALTER TABLE projects ADD COLUMN sub_directory VARCHAR(255) DEFAULT '/';")
-                    print("[DB] Added sub_directory column to projects table.")
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS sub_directory VARCHAR(255) DEFAULT '/';")
+                except Exception:
+                    pass
+                
+                # Migration: add env_vars column to existing table
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS env_vars JSONB DEFAULT '{}';")
+                except Exception:
+                    pass
+
+                # Migration: add framework column to existing table
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS framework VARCHAR(50);")
+                except Exception:
+                    pass
+
+                # Migration: add build_duration column to existing table
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS build_duration FLOAT;")
                 except Exception:
                     pass
                 

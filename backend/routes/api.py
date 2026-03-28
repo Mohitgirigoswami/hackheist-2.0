@@ -3,7 +3,7 @@ import sys
 import os
 from typing import Dict, Any, List
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Request
 from pydantic import BaseModel, HttpUrl
 
 # Configure professional structured logging
@@ -13,10 +13,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+import requests
 # Ensure backend root is in PYTHONPATH so we can import modules
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from services.docker_worker import process_deployment
 from db.connection import get_db_connection
+
+import json
 
 router = APIRouter()
 
@@ -24,8 +26,9 @@ class DeployRequest(BaseModel):
     name: str
     repo_url: HttpUrl
     sub_directory: str = "/"
+    env_vars: Dict[str, str] = {}
 
-@router.get("/projects", response_model=Dict[str, List[Dict[str, Any]]])
+@router.get("/projects", response_model=Dict[str, Any])
 async def get_projects():
     """ Track B: Fetch all projects from the remote Neon database. """
     conn = get_db_connection()
@@ -41,7 +44,13 @@ async def get_projects():
             cur.execute("SELECT * FROM projects ORDER BY created_at DESC")
             projects = cur.fetchall()
             logger.info(f"Successfully fetched {len(projects)} projects.")
-            return {"projects": projects}
+            
+            # Inject WORKER_IP so the Frontend knows where to point the "Browse" links
+            worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+            return {
+                "projects": projects,
+                "worker_ip": worker_ip
+            }
     except Exception as e:
         logger.exception(f"Unexpected error executing /projects query: {e}")
         raise HTTPException(
@@ -51,7 +60,73 @@ async def get_projects():
     finally:
         conn.close()
 
-def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/") -> None:
+@router.get("/projects/{project_id}/logs")
+async def get_project_logs(project_id: str):
+    """ Track B: Proxy logs from the Track A Worker node. """
+    try:
+        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+        response = requests.get(f"http://{worker_ip}:5000/logs/{project_id}", timeout=5)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Failed to fetch logs for {project_id}: {e}")
+        return {"logs": [f"Error fetching logs: {str(e)}"]}
+
+@router.delete("/projects/{project_id}")
+async def delete_project(project_id: str):
+    """ Track B: Clean up resources on Worker and delete from DB. """
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="DB connection failed")
+    
+    try:
+        # 1. Notify Worker to clean up Docker resources
+        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+        try:
+            requests.post(f"http://{worker_ip}:5000/delete/{project_id}", timeout=10)
+        except Exception as e:
+            logger.error(f"Failed to notify worker for deletion: {e}")
+
+        # 2. Remove from Database
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
+            
+        return {"message": "Project deleted successfully"}
+    except Exception as e:
+        logger.exception(f"Delete failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@router.post("/projects/{project_id}/redeploy", status_code=status.HTTP_202_ACCEPTED)
+async def redeploy_project(project_id: str, background_tasks: BackgroundTasks):
+    """ Track B: Fetch existing metadata and trigger a fresh build. """
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="DB unavailable")
+    
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT repo_url, sub_directory, env_vars FROM projects WHERE id = %s", (project_id,))
+            project = cur.fetchone()
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+            
+            repo_url = project['repo_url']
+            sub_dir = project['sub_directory']
+            env_vars = project['env_vars'] if isinstance(project['env_vars'], dict) else json.loads(project['env_vars'] or '{}')
+            
+            # Reset status to QUEUED before redeploy
+            cur.execute("UPDATE projects SET status = 'QUEUED' WHERE id = %s", (project_id,))
+            
+            background_tasks.add_task(execute_background_deployment, repo_url, project_id, sub_dir, env_vars)
+            return {"message": "Redeploy triggered successfully", "id": project_id}
+    except Exception as e:
+        logger.exception(f"Redeploy failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/", env_vars: Dict[str, str] = {}) -> None:
     """
     Background worker function that triggers Mohit's engine logic 
     and updates the database with the result autonomously.
@@ -73,8 +148,15 @@ def execute_background_deployment(repo_url: str, project_id: str, sub_directory:
     result = {"status": "FAILED", "assigned_port": None, "message": "Unknown critical failure."}
     
     try:
-        # We explicitly cast repo_url to string in case pydantic HttpUrl passes as an object
-        result = process_deployment(str(repo_url), project_id, sub_directory)
+        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+        # Call the standalone remote worker node!
+        response = requests.post(f"http://{worker_ip}:5000/build", json={
+            "repo_url": str(repo_url),
+            "project_id": project_id,
+            "sub_directory": sub_directory,
+            "env_vars": env_vars
+        }, timeout=300) # 5 min timeout for building
+        result = response.json()
     except Exception as e:
         # Crucial Hour 7 feature: Prevent background thread crashes
         logger.exception(f"Track A Engine threw an uncaught exception for {project_id}: {e}")
@@ -86,8 +168,14 @@ def execute_background_deployment(repo_url: str, project_id: str, sub_directory:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE projects SET status = %s, assigned_port = %s WHERE id = %s",
-                    (result.get("status", "FAILED"), result.get("assigned_port"), project_id)
+                    "UPDATE projects SET status = %s, assigned_port = %s, framework = %s, build_duration = %s WHERE id = %s",
+                    (
+                        result.get("status", "FAILED"), 
+                        result.get("assigned_port"), 
+                        result.get("framework"),
+                        result.get("build_duration"),
+                        project_id
+                    )
                 )
                 logger.info(f"Deployment workflow complete. Project {project_id} finalized with status: {result.get('status')}")
         except Exception as e:
@@ -114,8 +202,8 @@ async def deploy_project(req: DeployRequest, background_tasks: BackgroundTasks):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO projects (name, repo_url, sub_directory, status) VALUES (%s, %s, %s, %s) RETURNING id",
-                (req.name, str(req.repo_url), req.sub_directory, 'QUEUED')
+                "INSERT INTO projects (name, repo_url, sub_directory, status, env_vars) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (req.name, str(req.repo_url), req.sub_directory, 'QUEUED', json.dumps(req.env_vars))
             )
             inserted_row = cur.fetchone()
             if inserted_row:
@@ -140,7 +228,14 @@ async def deploy_project(req: DeployRequest, background_tasks: BackgroundTasks):
 
     try:
         # Execute Track A's workflow non-blocking using FastAPI Background Tasks
-        background_tasks.add_task(execute_background_deployment, str(req.repo_url), project_id, req.sub_directory)
+        background_tasks.add_task(execute_background_deployment, str(req.repo_url), project_id, req.sub_directory, req.env_vars)
+        return {"project_id": project_id, "status": "QUEUED"}
+    except Exception as e:
+        logger.exception(f"Failed to initiate background task for project {project_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail="Internal error while starting background deployment task."
+        )
     except Exception as e:
         logger.exception(f"Background task dispatch failed for {project_id}: {e}")
         raise HTTPException(
@@ -150,6 +245,64 @@ async def deploy_project(req: DeployRequest, background_tasks: BackgroundTasks):
 
     return {
         "message": "Deployment queued successfully",
+        "projectId": project_id,
+        "status": "QUEUED"
+    }
+
+@router.post("/webhook/github", status_code=status.HTTP_202_ACCEPTED)
+async def github_webhook(request: Request, background_tasks: BackgroundTasks):
+    """ Track B Hour 10: Auto-Deploy Webhook Receiver for GitHub Push Events """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    # Check if this is a push to main
+    ref = payload.get("ref")
+    if ref and ref != "refs/heads/main":
+        return {"message": "Ignored, not a push to main branch."}
+        
+    repo_url = payload.get("repository", {}).get("html_url")
+    if not repo_url:
+        return {"message": "Ignored, no repository URL found in payload."}
+
+    # Find project in DB by repo_url
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Database connection missing during /webhook/github.")
+        raise HTTPException(status_code=503, detail="Database service connection unavailable.")
+        
+    project_id = None
+    sub_directory = "/"
+    try:
+        with conn.cursor() as cur:
+            # Match repo URL (accounting for potential trailing .git or slashes)
+            search_url = repo_url.rstrip(".git").rstrip("/")
+            cur.execute(
+                "SELECT id, sub_directory FROM projects WHERE repo_url LIKE %s LIMIT 1", 
+                (f"{search_url}%",)
+            )
+            row = cur.fetchone()
+            if row:
+                project_id = str(row['id'])
+                sub_directory = row.get('sub_directory', '/')
+    except Exception as e:
+        logger.exception(f"Database lookup failed for webhook deployment: {e}")
+        raise HTTPException(status_code=500, detail="Database lookup failed.")
+    finally:
+        conn.close()
+
+    if not project_id:
+        logger.info(f"Webhook received for unknown repo: {repo_url}")
+        return {"message": f"Ignored, no registered project found for {repo_url}."}
+
+    logger.info(f"GitHub Webhook triggered auto-deployment for project {project_id}.")
+    
+    # Execute deployment workflow seamlessly
+    background_tasks.add_task(execute_background_deployment, str(repo_url), project_id, sub_directory)
+
+    return {
+        "message": "Auto-deployment queued successfully via GitHub Webhook",
         "projectId": project_id,
         "status": "QUEUED"
     }
