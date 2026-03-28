@@ -2,6 +2,7 @@ import os
 import subprocess
 import socket
 import shutil
+import glob
 
 def get_available_port() -> int:
     """Dynamically assign an available ephemeral host port to the container."""
@@ -26,19 +27,52 @@ def clone_repo(repo_url: str, project_id: str) -> str:
     return clone_dir
 
 def generate_dockerfile(source_dir: str) -> str:
-    """Generate a dynamic Dockerfile for Node.js if one does not exist."""
+    """Generate a dynamic Dockerfile for Node.js or Python if one does not exist."""
     dockerfile_path = os.path.join(source_dir, "Dockerfile")
     
     if os.path.exists(dockerfile_path):
         print(f"[Worker] Native Dockerfile found in {source_dir}.")
         return dockerfile_path
+
+    # Advanced Language Detection Logic (Hour 6)
+    is_python = False
+    if os.path.exists(os.path.join(source_dir, "requirements.txt")):
+        is_python = True
+    else:
+        # Check if there are any .py files
+        py_files = glob.glob(os.path.join(source_dir, "*.py"))
+        if py_files:
+            is_python = True
+
+    if is_python:
+        print(f"[Worker] Python application detected. Generating Python Dockerfile...")
         
-    print(f"[Worker] Native Dockerfile not found. Generating default Node/Vite Dockerfile...")
-    
-    # Generic hackathon Dockerfile handling React/Vite builds 
-    # and falling back to typical Node setups
-    # It assumes package.json exists.
-    dockerfile_content = """FROM node:18-alpine
+        # Ranking-based entrypoint selection
+        entrypoint = None
+        for candidate in ["main.py", "run.py", "app.py"]:
+            if os.path.exists(os.path.join(source_dir, candidate)):
+                entrypoint = candidate
+                break
+        
+        if not entrypoint:
+            # Fallback to any .py file
+            py_files = glob.glob(os.path.join(source_dir, "*.py"))
+            if py_files:
+                entrypoint = os.path.basename(py_files[0])
+            else:
+                entrypoint = "main.py"
+                
+        dockerfile_content = f"""FROM python:3.9-slim
+WORKDIR /app
+COPY . .
+RUN if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; fi
+EXPOSE 8000
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "{entrypoint}"]
+"""
+    else:
+        print(f"[Worker] Native Dockerfile not found. Generating default Node/Vite Dockerfile...")
+        dockerfile_content = """FROM node:18-alpine
 
 WORKDIR /app
 COPY package*.json ./
@@ -57,6 +91,7 @@ EXPOSE 3000
 # Smarter entrypoint: Serve dist/build if standard Vite/CRA app, else run npm start
 CMD if [ -d "dist" ]; then serve -s dist -l 3000; elif [ -d "build" ]; then serve -s build -l 3000; else npm start; fi
 """
+
     with open(dockerfile_path, 'w') as f:
         f.write(dockerfile_content)
         
@@ -82,18 +117,25 @@ def run_container(image_tag: str, project_id: str, port: int) -> str:
     
     return res.stdout.strip()  # Returns container ID
 
-def process_deployment(repo_url: str, project_id: str) -> dict:
+def process_deployment(repo_url: str, project_id: str, sub_directory: str = "/") -> dict:
     """
     Main orchestration function for Track A.
     Coordinates clone -> dockerfile generation -> image build -> container execution.
     """
     print(f"\n[Worker] --- Starting Deployment Workflow for {project_id} ---")
-    print(f"[Worker] Repository: {repo_url}")
+    print(f"[Worker] Repository: {repo_url} | Subdirectory: {sub_directory}")
     
     try:
         source_dir = clone_repo(repo_url, project_id)
-        generate_dockerfile(source_dir)
-        image_tag = build_image(source_dir, project_id)
+        
+        target_dir = source_dir
+        if sub_directory and sub_directory != "/":
+            target_dir = os.path.abspath(os.path.join(source_dir, sub_directory.strip("/")))
+            if not os.path.isdir(target_dir):
+                raise ValueError(f"Subdirectory {sub_directory} not found in the repository.")
+        
+        generate_dockerfile(target_dir)
+        image_tag = build_image(target_dir, project_id)
         
         # Cleanup cloned workspace post-build to conserve disk space
         shutil.rmtree(source_dir, ignore_errors=True)

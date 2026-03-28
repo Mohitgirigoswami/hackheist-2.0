@@ -97,7 +97,7 @@ We will use an ultra-lightweight Feature Branching model. No pull requests—jus
 
 ### **Hour 6: Advanced Features (Python Apps & Subdirectories)**
 
-* **Track A (Mohit):** Updates docker\_worker.py to accept a sub\_directory argument. After git clone, the script must change directory to the target subfolder before detecting the language. Adds language detection logic for Python (looks for requirements.txt or main.py) and generates a dynamic Python Dockerfile (FROM python:3.9-slim, pip install \-r, etc.).  
+* **Track A (Mohit):** Updates docker\_worker.py to accept a sub\_directory argument. After git clone, the script must change directory to the target subfolder before detecting the language. Adds language detection logic for Python (looks for requirements.txt or main.py) and generates a dynamic Python Dockerfile (FROM python:3.9-slim, pip install \-r, etc.) the logic for picking right file should be raniking based like fist find if main.oy exist then use it else run.py else app.py else any.py file we get make sure to handle python based think correctly as it sometimes have issue in runnning it.  
 * **Track B (Praful):** Modifies the DB schema to add a sub\_directory column (default /). Updates the POST /api/deploy Pydantic model and route to accept sub\_directory and pass it to Mohit's worker function.  
 * **Track C (Sania):** Updates the "New Deployment" form to include an optional "Root Directory" or "Subdirectory" text input. Updates the API payload to send this new field to Praful's backend.
 
