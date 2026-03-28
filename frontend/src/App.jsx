@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react';
-import { Rocket, Loader2, GitBranch, TerminalSquare, ExternalLink, Activity, Github } from 'lucide-react';
+import { 
+  Rocket, 
+  Loader2, 
+  GitBranch, 
+  TerminalSquare, 
+  ExternalLink, 
+  Activity, 
+  Github,
+  BarChart2,
+  X 
+} from 'lucide-react';
 import { getProjects, deployProject } from './services/api';
 
 function App() {
@@ -8,6 +18,7 @@ function App() {
   const [formName, setFormName] = useState('');
   const [formRepo, setFormRepo] = useState('');
   const [deploying, setDeploying] = useState(false);
+  const [metricsProject, setMetricsProject] = useState(null);
 
   const fetchProjects = async () => {
     try {
@@ -182,14 +193,22 @@ function App() {
                         </td>
                         <td className="px-4 py-4 glass rounded-r-xl border-l-0 text-right">
                           {project.status === 'RUNNING' && project.assigned_port ? (
-                            <a 
-                              href={`http://localhost:${project.assigned_port}`} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 font-medium px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
-                            >
-                              Visit <ExternalLink className="w-4 h-4" />
-                            </a>
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                onClick={() => setMetricsProject(project)}
+                                className="inline-flex items-center gap-2 text-sm text-purple-400 hover:text-purple-300 font-medium px-3 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 transition-colors"
+                              >
+                                <BarChart2 className="w-4 h-4" /> Metrics
+                              </button>
+                              <a 
+                                href={`http://localhost:${project.assigned_port}`} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 font-medium px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 transition-colors"
+                              >
+                                Visit <ExternalLink className="w-4 h-4" />
+                              </a>
+                            </div>
                           ) : (
                             <span className="text-sm text-slate-600 cursor-not-allowed">--</span>
                           )}
@@ -203,6 +222,52 @@ function App() {
           </section>
         </div>
       </main>
+
+      {/* Grafana Metrics Modal */}
+      {metricsProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMetricsProject(null)} />
+          <div className="relative w-full max-w-5xl bg-slate-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[80vh] border-t-purple-500/30 border-t-2">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-slate-800/80">
+              <div className="flex items-center gap-3">
+                <div className="glass p-2 rounded-lg">
+                  <BarChart2 className="w-5 h-5 text-purple-400" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg flex items-center gap-2">
+                    System Metrics 
+                    <span className="text-slate-400 font-normal">/ {metricsProject.name}</span>
+                  </h3>
+                  <div className="flex gap-2 text-xs text-slate-400 font-mono mt-0.5">
+                    <span className="bg-black/30 px-2 py-0.5 rounded">Port: {metricsProject.assigned_port}</span>
+                    <span className="bg-black/30 px-2 py-0.5 rounded">ID: {metricsProject.id.slice(0, 8)}...</span>
+                  </div>
+                </div>
+              </div>
+              <button 
+                onClick={() => setMetricsProject(null)}
+                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body / Iframe */}
+            <div className="flex-1 bg-black p-4">
+              <iframe 
+                src={`http://localhost:3000/d/container-metrics/container-metrics?orgId=1&refresh=5s&theme=dark&var-container_name=container-${metricsProject.id}&kiosk=1`}
+                width="100%" 
+                height="100%" 
+                frameBorder="0"
+                className="rounded-xl border border-white/5 bg-slate-900"
+                title="Grafana Dashboard"
+              ></iframe>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
