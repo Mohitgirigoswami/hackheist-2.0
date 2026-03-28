@@ -74,6 +74,9 @@ def run_container(image_tag: str, project_id: str, port: int) -> str:
     container_name = f"container-{project_id}"
     print(f"[Worker] Running container {container_name} for image {image_tag} on port {port}...")
     
+    # Prevent name conflicts if deploying the same project again
+    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, check=False)
+    
     cmd = ["docker", "run", "-d", "-p", f"{port}:3000", "--name", container_name, image_tag]
     res = subprocess.run(cmd, capture_output=True, text=True, check=True)
     
@@ -91,6 +94,11 @@ def process_deployment(repo_url: str, project_id: str) -> dict:
         source_dir = clone_repo(repo_url, project_id)
         generate_dockerfile(source_dir)
         image_tag = build_image(source_dir, project_id)
+        
+        # Cleanup cloned workspace post-build to conserve disk space
+        shutil.rmtree(source_dir, ignore_errors=True)
+        print(f"[Worker] Cleaned up temporary directory {source_dir}")
+        
         assigned_port = get_available_port()
         container_id = run_container(image_tag, project_id, assigned_port)
         
