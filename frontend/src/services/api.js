@@ -13,14 +13,14 @@ export const getProjects = async () => {
   }
 };
 
-export const deployProject = async (name, repo_url, sub_directory = "/", env_vars = {}) => {
+export const deployProject = async (name, repo_url, sub_directory = "/", env_vars = {}, deployment_type = "MANAGED", custom_worker_url = null, memory_limit = null) => {
   try {
     const res = await fetch(`${API_URL}/deploy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ name, repo_url, sub_directory, env_vars }),
+      body: JSON.stringify({ name, repo_url, sub_directory, env_vars, deployment_type, custom_worker_url, memory_limit }),
     });
     if (!res.ok) throw new Error('Failed to deploy project');
     return await res.json();

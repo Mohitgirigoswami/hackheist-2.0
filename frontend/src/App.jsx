@@ -18,7 +18,9 @@ import {
   Search,
   Filter,
   Copy,
-  Check
+  Check,
+  Cloud,
+  Laptop
 } from 'lucide-react';
 import { getProjects, deployProject, getProjectLogs, deleteProject, redeployProject } from './services/api';
 
@@ -37,6 +39,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterFramework, setFilterFramework] = useState('All');
   const [copiedId, setCopiedId] = useState(null);
+  const [deploymentType, setDeploymentType] = useState('MANAGED');
+  const [customWorkerUrl, setCustomWorkerUrl] = useState('');
+  const [memoryLimit, setMemoryLimit] = useState(256);
 
   useEffect(() => {
     let interval;
@@ -89,11 +94,14 @@ function App() {
     });
 
     try {
-      await deployProject(formName, formRepo, formSubDir, envVarsObj);
+      const memoryToSend = deploymentType === 'MANAGED' ? memoryLimit : null;
+      const workerUrlToSend = deploymentType === 'BYOC' ? customWorkerUrl : null;
+      await deployProject(formName, formRepo, formSubDir, envVarsObj, deploymentType, workerUrlToSend, memoryToSend);
       setFormName('');
       setFormRepo('');
       setFormSubDir('/');
       setFormEnvVars('');
+      setCustomWorkerUrl('');
       await fetchProjects();
     } catch (e) {
       alert("Deployment failed to start. Check console for details.");
@@ -258,6 +266,68 @@ function App() {
                   <p className="text-[10px] text-slate-600 px-1 italic">One pair per line (e.g. API_KEY=secret)</p>
                 </div>
 
+                {/* Dual Deployment Mode Toggle */}
+                <div className="flex flex-col gap-3 group/input">
+                  <label className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Deployment Target</label>
+                  <div className="flex p-1 bg-black/40 rounded-2xl border border-white/5 shadow-inner">
+                    <button
+                      type="button"
+                      onClick={() => setDeploymentType('MANAGED')}
+                      className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${
+                        deploymentType === 'MANAGED' 
+                          ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.2)]' 
+                          : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                      }`}
+                    >
+                      <Cloud className="w-4 h-4" />
+                      Free Cloud (Codespace)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDeploymentType('BYOC')}
+                      className={`flex-1 py-3 px-4 rounded-xl flex items-center justify-center gap-2 text-sm font-bold transition-all ${
+                        deploymentType === 'BYOC' 
+                          ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]' 
+                          : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                      }`}
+                    >
+                      <Laptop className="w-4 h-4" />
+                      Bring Your Own Cloud
+                    </button>
+                  </div>
+                </div>
+
+                {/* Conditional Inputs */}
+                {deploymentType === 'MANAGED' ? (
+                  <div className="flex flex-col gap-2 group/input animate-in slide-in-from-top-2 fade-in duration-300">
+                    <label className="text-[11px] font-bold uppercase tracking-widest text-slate-500 group-focus-within/input:text-blue-400 transition-colors">Container RAM Limit</label>
+                    <select 
+                      value={memoryLimit}
+                      onChange={(e) => setMemoryLimit(Number(e.target.value))}
+                      className="bg-black/40 border border-white/5 rounded-2xl px-5 py-4 outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20 focus:bg-white/5 w-full transition-all text-sm text-slate-300 shadow-inner appearance-none"
+                    >
+                      <option value={128}>128 MB (Micro)</option>
+                      <option value={256}>256 MB (Standard)</option>
+                      <option value={512}>512 MB (Pro)</option>
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 group/input animate-in slide-in-from-top-2 fade-in duration-300">
+                    <label className="text-[11px] font-bold uppercase tracking-widest text-slate-500 group-focus-within/input:text-purple-400 transition-colors">Worker Node URL</label>
+                    <div className="relative">
+                      <Server className="w-5 h-5 absolute left-5 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/input:text-purple-500 transition-colors" />
+                      <input 
+                        type="url" 
+                        value={customWorkerUrl}
+                        onChange={(e) => setCustomWorkerUrl(e.target.value)}
+                        placeholder="https://your-ngrok-url.ngrok-free.app"
+                        required={deploymentType === 'BYOC'}
+                        className="bg-black/40 border border-white/5 rounded-2xl pl-14 pr-5 py-4 outline-none focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/20 focus:bg-white/5 w-full transition-all text-sm placeholder:text-slate-600 shadow-inner"
+                      />
+                    </div>
+                  </div>
+                )}
+
                 <div className="pt-2">
                   <button 
                     type="submit" 
@@ -265,7 +335,7 @@ function App() {
                     className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold py-4 px-4 rounded-2xl transition-all duration-300 shadow-[0_0_20px_rgba(139,92,246,0.2)] hover:shadow-[0_0_40px_rgba(139,92,246,0.6)] flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5 active:translate-y-0 border border-white/10"
                   >
                     {deploying ? <Loader2 className="w-5 h-5 animate-spin" /> : <Rocket className="w-5 h-5 group-hover:animate-bounce" />}
-                    {deploying ? 'Allocating Container...' : 'Deploy to Localhost'}
+                    {deploying ? 'Allocating Container...' : 'Deploy Project 🔥'}
                   </button>
                 </div>
               </form>
@@ -341,6 +411,11 @@ function App() {
                         <div className="col-span-3 flex flex-col">
                           <div className="flex items-center gap-2 mb-1">
                             <span className="font-bold text-slate-100 text-base">{project.name}</span>
+                            {project.deployment_type === 'BYOC' ? (
+                              <span className="px-2 py-0.5 rounded-md text-[9px] font-bold border uppercase tracking-tighter bg-purple-500/10 text-purple-400 border-purple-500/20">💻 BYOC</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md text-[9px] font-bold border uppercase tracking-tighter bg-blue-500/10 text-blue-400 border-blue-500/20 flex gap-1 items-center">☁️ Cloud {project.memory_limit && <span className="opacity-60 lowercase">({project.memory_limit}mb)</span>}</span>
+                            )}
                             {project.framework && (
                               <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold border uppercase tracking-tighter ${getFrameworkBadge(project.framework)}`}>
                                 {project.framework}

@@ -64,6 +64,22 @@ def verify_schema():
                     cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS build_duration FLOAT;")
                 except Exception:
                     pass
+
+                # Migration for Dual Deployment modes
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS deployment_type VARCHAR(50) DEFAULT 'MANAGED';")
+                except Exception:
+                    pass
+                
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS custom_worker_url VARCHAR(255);")
+                except Exception:
+                    pass
+                
+                try:
+                    cur.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS memory_limit INTEGER;")
+                except Exception:
+                    pass
                 
                 print("[DB] Database schema is ready.")
         except Exception as e:

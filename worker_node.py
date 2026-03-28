@@ -21,6 +21,7 @@ class BuildRequest(BaseModel):
     project_id: str
     sub_directory: str = "/"
     env_vars: Dict[str, str] = {}
+    memory_limit: int = None
 
 def get_available_port() -> int:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -135,13 +136,17 @@ def build_image(source_dir: str, project_id: str) -> str:
     run_command(["docker", "build", "-t", image_tag, "."], project_id, cwd=source_dir)
     return image_tag
 
-def run_container(image_tag: str, project_id: str, port: int, framework: str, env_vars: Dict[str, str] = {}) -> str:
+def run_container(image_tag: str, project_id: str, port: int, framework: str, env_vars: Dict[str, str] = {}, memory_limit: int = None) -> str:
     container_name = f"container-{project_id}"
     log(project_id, f"Removing existing container {container_name} if it exists...")
     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, check=False)
     
     target_port = "8000" if framework == "Python" else "3000"
     cmd = ["docker", "run", "-d", "-p", f"{port}:{target_port}", "--name", container_name]
+    
+    if memory_limit is not None:
+        cmd.extend(["--memory", f"{memory_limit}m"])
+        
     for key, value in env_vars.items():
         cmd.extend(["-e", f"{key}={value}"])
     cmd.append(image_tag)
@@ -190,7 +195,7 @@ async def build_project(req: BuildRequest):
         image_tag = build_image(target_dir, req.project_id)
         
         assigned_port = get_available_port()
-        container_id = run_container(image_tag, req.project_id, assigned_port, gen_result["framework"], req.env_vars)
+        container_id = run_container(image_tag, req.project_id, assigned_port, gen_result["framework"], req.env_vars, req.memory_limit)
         
         # Cleanup source directory
         shutil.rmtree(source_dir, ignore_errors=True)

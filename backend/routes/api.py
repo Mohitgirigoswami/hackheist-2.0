@@ -27,6 +27,9 @@ class DeployRequest(BaseModel):
     repo_url: HttpUrl
     sub_directory: str = "/"
     env_vars: Dict[str, str] = {}
+    deployment_type: str = "MANAGED"
+    custom_worker_url: str = None
+    memory_limit: int = None
 
 @router.get("/projects", response_model=Dict[str, Any])
 async def get_projects():
@@ -64,8 +67,21 @@ async def get_projects():
 async def get_project_logs(project_id: str):
     """ Track B: Proxy logs from the Track A Worker node. """
     try:
-        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
-        response = requests.get(f"http://{worker_ip}:5000/logs/{project_id}", timeout=5)
+        worker_url = f"http://{os.environ.get('WORKER_IP', '127.0.0.1')}:5000"
+        conn = get_db_connection()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT deployment_type, custom_worker_url FROM projects WHERE id = %s", (project_id,))
+                    project = cur.fetchone()
+                    if project and project.get('deployment_type') == 'BYOC' and project.get('custom_worker_url'):
+                        worker_url = project['custom_worker_url'].rstrip("/")
+            except Exception as e:
+                logger.error(f"Failed to fetch worker url for logs: {e}")
+            finally:
+                conn.close()
+
+        response = requests.get(f"{worker_url}/logs/{project_id}", timeout=5)
         return response.json()
     except Exception as e:
         logger.error(f"Failed to fetch logs for {project_id}: {e}")
@@ -80,9 +96,15 @@ async def delete_project(project_id: str):
     
     try:
         # 1. Notify Worker to clean up Docker resources
-        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+        worker_url = f"http://{os.environ.get('WORKER_IP', '127.0.0.1')}:5000"
+        with conn.cursor() as cur:
+            cur.execute("SELECT deployment_type, custom_worker_url FROM projects WHERE id = %s", (project_id,))
+            project = cur.fetchone()
+            if project and project.get('deployment_type') == 'BYOC' and project.get('custom_worker_url'):
+                worker_url = project['custom_worker_url'].rstrip("/")
+
         try:
-            requests.post(f"http://{worker_ip}:5000/delete/{project_id}", timeout=10)
+            requests.post(f"{worker_url}/delete/{project_id}", timeout=10)
         except Exception as e:
             logger.error(f"Failed to notify worker for deletion: {e}")
 
@@ -106,7 +128,7 @@ async def redeploy_project(project_id: str, background_tasks: BackgroundTasks):
     
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT repo_url, sub_directory, env_vars FROM projects WHERE id = %s", (project_id,))
+            cur.execute("SELECT repo_url, sub_directory, env_vars, deployment_type, custom_worker_url, memory_limit FROM projects WHERE id = %s", (project_id,))
             project = cur.fetchone()
             if not project:
                 raise HTTPException(status_code=404, detail="Project not found")
@@ -114,11 +136,14 @@ async def redeploy_project(project_id: str, background_tasks: BackgroundTasks):
             repo_url = project['repo_url']
             sub_dir = project['sub_directory']
             env_vars = project['env_vars'] if isinstance(project['env_vars'], dict) else json.loads(project['env_vars'] or '{}')
+            dep_type = project.get('deployment_type', 'MANAGED')
+            c_url = project.get('custom_worker_url')
+            mem = project.get('memory_limit')
             
             # Reset status to QUEUED before redeploy
             cur.execute("UPDATE projects SET status = 'QUEUED' WHERE id = %s", (project_id,))
             
-            background_tasks.add_task(execute_background_deployment, repo_url, project_id, sub_dir, env_vars)
+            background_tasks.add_task(execute_background_deployment, repo_url, project_id, sub_dir, env_vars, dep_type, c_url, mem)
             return {"message": "Redeploy triggered successfully", "id": project_id}
     except Exception as e:
         logger.exception(f"Redeploy failed: {e}")
@@ -126,7 +151,7 @@ async def redeploy_project(project_id: str, background_tasks: BackgroundTasks):
     finally:
         conn.close()
 
-def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/", env_vars: Dict[str, str] = {}) -> None:
+def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/", env_vars: Dict[str, str] = {}, deployment_type: str = "MANAGED", custom_worker_url: str = None, memory_limit: int = None) -> None:
     """
     Background worker function that triggers Mohit's engine logic 
     and updates the database with the result autonomously.
@@ -149,12 +174,17 @@ def execute_background_deployment(repo_url: str, project_id: str, sub_directory:
     
     try:
         worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+        worker_url = f"http://{worker_ip}:5000"
+        if deployment_type == "BYOC" and custom_worker_url:
+            worker_url = custom_worker_url.rstrip("/")
+            
         # Call the standalone remote worker node!
-        response = requests.post(f"http://{worker_ip}:5000/build", json={
+        response = requests.post(f"{worker_url}/build", json={
             "repo_url": str(repo_url),
             "project_id": project_id,
             "sub_directory": sub_directory,
-            "env_vars": env_vars
+            "env_vars": env_vars,
+            "memory_limit": memory_limit
         }, timeout=300) # 5 min timeout for building
         result = response.json()
     except Exception as e:
@@ -202,8 +232,8 @@ async def deploy_project(req: DeployRequest, background_tasks: BackgroundTasks):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO projects (name, repo_url, sub_directory, status, env_vars) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (req.name, str(req.repo_url), req.sub_directory, 'QUEUED', json.dumps(req.env_vars))
+                "INSERT INTO projects (name, repo_url, sub_directory, status, env_vars, deployment_type, custom_worker_url, memory_limit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (req.name, str(req.repo_url), req.sub_directory, 'QUEUED', json.dumps(req.env_vars), req.deployment_type, req.custom_worker_url, req.memory_limit)
             )
             inserted_row = cur.fetchone()
             if inserted_row:
@@ -228,7 +258,7 @@ async def deploy_project(req: DeployRequest, background_tasks: BackgroundTasks):
 
     try:
         # Execute Track A's workflow non-blocking using FastAPI Background Tasks
-        background_tasks.add_task(execute_background_deployment, str(req.repo_url), project_id, req.sub_directory, req.env_vars)
+        background_tasks.add_task(execute_background_deployment, str(req.repo_url), project_id, req.sub_directory, req.env_vars, req.deployment_type, req.custom_worker_url, req.memory_limit)
         return {"project_id": project_id, "status": "QUEUED"}
     except Exception as e:
         logger.exception(f"Failed to initiate background task for project {project_id}: {e}")
@@ -274,18 +304,24 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
         
     project_id = None
     sub_directory = "/"
+    dep_type = "MANAGED"
+    c_url = None
+    mem = None
     try:
         with conn.cursor() as cur:
             # Match repo URL (accounting for potential trailing .git or slashes)
             search_url = repo_url.rstrip(".git").rstrip("/")
             cur.execute(
-                "SELECT id, sub_directory FROM projects WHERE repo_url LIKE %s LIMIT 1", 
+                "SELECT id, sub_directory, deployment_type, custom_worker_url, memory_limit FROM projects WHERE repo_url LIKE %s LIMIT 1", 
                 (f"{search_url}%",)
             )
             row = cur.fetchone()
             if row:
                 project_id = str(row['id'])
                 sub_directory = row.get('sub_directory', '/')
+                dep_type = row.get('deployment_type', 'MANAGED')
+                c_url = row.get('custom_worker_url')
+                mem = row.get('memory_limit')
     except Exception as e:
         logger.exception(f"Database lookup failed for webhook deployment: {e}")
         raise HTTPException(status_code=500, detail="Database lookup failed.")
@@ -299,7 +335,7 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     logger.info(f"GitHub Webhook triggered auto-deployment for project {project_id}.")
     
     # Execute deployment workflow seamlessly
-    background_tasks.add_task(execute_background_deployment, str(repo_url), project_id, sub_directory)
+    background_tasks.add_task(execute_background_deployment, str(repo_url), project_id, sub_directory, {}, dep_type, c_url, mem)
 
     return {
         "message": "Auto-deployment queued successfully via GitHub Webhook",
