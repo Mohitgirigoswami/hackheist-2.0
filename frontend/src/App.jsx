@@ -131,7 +131,9 @@ function App() {
 
   const copyWebhook = (projectId) => {
     // Webhooks should point to the Backend API (Port 8000)
-    const url = `${window.location.protocol}//${workerIp}:8000/api/projects/${projectId}/redeploy`;
+    const url = workerIp.includes('github.dev')
+      ? `${workerIp.replace('-5000', '-8000')}/api/projects/${projectId}/redeploy`
+      : `${window.location.protocol}//${workerIp}:8000/api/projects/${projectId}/redeploy`;
     navigator.clipboard.writeText(`curl -X POST ${url}`);
     setCopiedId(projectId);
     setTimeout(() => setCopiedId(null), 2000);
@@ -479,7 +481,11 @@ function App() {
                                 <Cpu className="w-4 h-4" />
                               </button>
                               <a 
-                                href={`http://${workerIp}:${project.assigned_port}`} 
+                                href={
+                                  workerIp.includes('github.dev') 
+                                    ? workerIp.replace('-5000', `-${project.assigned_port}`) 
+                                    : `http://${workerIp}:${project.assigned_port}`
+                                }
                                 target="_blank" 
                                 rel="noreferrer"
                                 className="p-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-600 text-blue-400 hover:text-white transition-all border border-blue-500/20 hover:border-transparent hover:shadow-[0_0_15px_rgba(59,130,246,0.4)]"
@@ -549,7 +555,11 @@ function App() {
               
               {/* Note: kiosk=1 disables Grafana's chrome completely, making it blend seamlessly into our UI */}
               <iframe 
-                src={`http://${workerIp}:3000/d/container-metrics/container-metrics?orgId=1&refresh=5s&theme=dark&var-container_name=container-${metricsProject.id}&kiosk=1`}
+                src={
+                  workerIp.includes('github.dev') 
+                    ? `${workerIp.replace('-5000', '-3000')}/d/container-metrics/container-metrics?orgId=1&refresh=5s&theme=dark&var-container_name=container-${metricsProject.id}&kiosk=1`
+                    : `http://${workerIp}:3000/d/container-metrics/container-metrics?orgId=1&refresh=5s&theme=dark&var-container_name=container-${metricsProject.id}&kiosk=1`
+                }
                 width="100%" 
                 height="100%" 
                 frameBorder="0"

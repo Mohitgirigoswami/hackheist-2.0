@@ -8,8 +8,9 @@ from pydantic import BaseModel
 import uvicorn
 import json
 import time
+import psutil
 
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, List
 
 app = FastAPI(title="ZeroToDeploy BYOC Node")
 
@@ -21,7 +22,7 @@ class BuildRequest(BaseModel):
     project_id: str
     sub_directory: str = "/"
     env_vars: Dict[str, str] = {}
-    memory_limit: int = None
+    memory_limit: Optional[int] = None
 
 def get_available_port() -> int:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -136,7 +137,7 @@ def build_image(source_dir: str, project_id: str) -> str:
     run_command(["docker", "build", "-t", image_tag, "."], project_id, cwd=source_dir)
     return image_tag
 
-def run_container(image_tag: str, project_id: str, port: int, framework: str, env_vars: Dict[str, str] = {}, memory_limit: int = None) -> str:
+def run_container(image_tag: str, project_id: str, port: int, framework: str, env_vars: Dict[str, str] = {}, memory_limit: Optional[int] = None) -> str:
     container_name = f"container-{project_id}"
     log(project_id, f"Removing existing container {container_name} if it exists...")
     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True, check=False)

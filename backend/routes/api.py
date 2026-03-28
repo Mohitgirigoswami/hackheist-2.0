@@ -1,7 +1,7 @@
 import logging
 import sys
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Request
 from pydantic import BaseModel, HttpUrl
@@ -22,14 +22,21 @@ import json
 
 router = APIRouter()
 
+def get_default_worker_url():
+    """ Parse the WORKER_IP string. If it's a full Codespace URL, use it entirely. If it's a raw IP, format it. """
+    worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
+    if worker_ip.startswith("http://") or worker_ip.startswith("https://"):
+        return worker_ip.rstrip("/")
+    return f"http://{worker_ip}:5000"
+
 class DeployRequest(BaseModel):
     name: str
     repo_url: HttpUrl
     sub_directory: str = "/"
     env_vars: Dict[str, str] = {}
     deployment_type: str = "MANAGED"
-    custom_worker_url: str = None
-    memory_limit: int = None
+    custom_worker_url: Optional[str] = None
+    memory_limit: Optional[int] = None
 
 @router.get("/projects", response_model=Dict[str, Any])
 async def get_projects():
@@ -67,7 +74,7 @@ async def get_projects():
 async def get_project_logs(project_id: str):
     """ Track B: Proxy logs from the Track A Worker node. """
     try:
-        worker_url = f"http://{os.environ.get('WORKER_IP', '127.0.0.1')}:5000"
+        worker_url = get_default_worker_url()
         conn = get_db_connection()
         if conn:
             try:
@@ -96,7 +103,7 @@ async def delete_project(project_id: str):
     
     try:
         # 1. Notify Worker to clean up Docker resources
-        worker_url = f"http://{os.environ.get('WORKER_IP', '127.0.0.1')}:5000"
+        worker_url = get_default_worker_url()
         with conn.cursor() as cur:
             cur.execute("SELECT deployment_type, custom_worker_url FROM projects WHERE id = %s", (project_id,))
             project = cur.fetchone()
@@ -151,7 +158,7 @@ async def redeploy_project(project_id: str, background_tasks: BackgroundTasks):
     finally:
         conn.close()
 
-def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/", env_vars: Dict[str, str] = {}, deployment_type: str = "MANAGED", custom_worker_url: str = None, memory_limit: int = None) -> None:
+def execute_background_deployment(repo_url: str, project_id: str, sub_directory: str = "/", env_vars: Dict[str, str] = {}, deployment_type: str = "MANAGED", custom_worker_url: Optional[str] = None, memory_limit: Optional[int] = None) -> None:
     """
     Background worker function that triggers Mohit's engine logic 
     and updates the database with the result autonomously.
@@ -173,8 +180,7 @@ def execute_background_deployment(repo_url: str, project_id: str, sub_directory:
     result = {"status": "FAILED", "assigned_port": None, "message": "Unknown critical failure."}
     
     try:
-        worker_ip = os.environ.get("WORKER_IP", "127.0.0.1")
-        worker_url = f"http://{worker_ip}:5000"
+        worker_url = get_default_worker_url()
         if deployment_type == "BYOC" and custom_worker_url:
             worker_url = custom_worker_url.rstrip("/")
             
